@@ -88,6 +88,7 @@ testcall() {
     printf("FAIL: sysinfo succeeded with bad argument\n");
     exit(1);
   }
+
 }
 
 void testproc() {
@@ -125,7 +126,9 @@ main(int argc, char *argv[])
 {
   printf("sysinfotest: start\n");
   testcall();
+  // printf("testcall passed\n");
   testmem();
+  // printf("testmem passed\n");
   testproc();
   printf("sysinfotest: OK\n");
   exit(0);

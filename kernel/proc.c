@@ -21,6 +21,8 @@ static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
 
+int not_unused_proc_num = 0;
+
 // initialize the proc table at boot time.
 void
 procinit(void)
@@ -127,6 +129,7 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  ++not_unused_proc_num;
   return p;
 }
 
@@ -150,6 +153,7 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  --not_unused_proc_num;
 }
 
 // Create a user page table for a given process,
@@ -294,6 +298,8 @@ fork(void)
   pid = np->pid;
 
   np->state = RUNNABLE;
+
+  np->mask = p->mask;
 
   release(&np->lock);
 
@@ -692,4 +698,23 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+
+int 
+get_unused_num_of_proc(void)
+{
+  // struct proc * p;
+  // int res = 0;
+  // for (p = proc; p < &proc[NPROC]; ++p) {
+  //   // acquire(&p->lock);
+  //   if (p->state != UNUSED) {
+  //     ++res;
+  //   }
+  //   // release(&p->lock);
+  // }
+
+  // return res;
+
+  return not_unused_proc_num;
 }
