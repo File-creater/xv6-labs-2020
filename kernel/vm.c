@@ -31,10 +31,10 @@ kvminit()
   kvmmap(VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
 
   // CLINT
-  kvmmap(CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+  kvmmap(CLINT, CLINT, 0x10000, PTE_R | PTE_W); // 16 * PGSIZE
 
   // PLIC
-  kvmmap(PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+  kvmmap(PLIC, PLIC, 0x400000, PTE_R | PTE_W);  // 1024 * PGSIZE
 
   // map kernel text executable and read-only.
   kvmmap(KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
@@ -163,6 +163,7 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
       break;
     a += PGSIZE;
     pa += PGSIZE;
+    // printf("adding mappages with va is %p and pa is %p \n", a, pa);
   }
   return 0;
 }
@@ -178,14 +179,21 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
   if((va % PGSIZE) != 0)
     panic("uvmunmap: not aligned");
+  
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
       panic("uvmunmap: walk");
     if((*pte & PTE_V) == 0)
+    {
+      printf("uvmunmap is going to panic:\nwith a is %p, va is %p, napges is %d, do_free is %d\n", a, va, npages, do_free);
       panic("uvmunmap: not mapped");
+    }  
     if(PTE_FLAGS(*pte) == PTE_V)
-      panic("uvmunmap: not a leaf");
+    {
+      printf("uvmunmap is going to panic:\nwith a is %p, va is %p, napges is %d, do_free is %d\n", a, va, npages, do_free);
+      panic("uvmunmap : not a leaf");
+    }  
     if(do_free){
       uint64 pa = PTE2PA(*pte);
       kfree((void*)pa);
@@ -235,7 +243,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
     return oldsz;
 
   oldsz = PGROUNDUP(oldsz);
-  for(a = oldsz; a < newsz; a += PGSIZE){
+  for(a = oldsz; a < newsz && a < PLIC; a += PGSIZE){
     mem = kalloc();
     if(mem == 0){
       uvmdealloc(pagetable, a, oldsz);
@@ -283,9 +291,34 @@ freewalk(pagetable_t pagetable)
       freewalk((pagetable_t)child);
       pagetable[i] = 0;
     } else if(pte & PTE_V){
+      // struct proc * p = myproc();
+      // printf("%d\n", p->pid);
+      printf("freewalk is going to panic with leaf's pa:%p and its flag is %d\n", PTE2PA(pte), pte & (PTE_V|PTE_R|PTE_W|PTE_X|PTE_U));
       panic("freewalk: leaf");
     }
   }
+  // printf("freewalk pa %p\n", PTE2PA((uint64)pagetable));
+  kfree((void*)pagetable);
+}
+
+// Recursively free page-table pages without free physical memory
+// for the use of freeing process's kernel page table
+void
+freewalk_without_physical(pagetable_t pagetable)
+{
+  for(int i = 0; i < 512; ++i) {
+    pte_t *pte = &pagetable[i];
+    if ((*pte & PTE_V) && (*pte & (PTE_R | PTE_W | PTE_X)) == 0) {
+      uint64 child = PTE2PA(*pte);
+      freewalk_without_physical((pagetable_t)child);
+      pagetable[i] = 0;
+    }
+    else if (*pte & PTE_V){
+      // panic("freewalk_without_physical : leaf");
+      *pte = 0;
+    }
+  }
+
   kfree((void*)pagetable);
 }
 
@@ -294,6 +327,7 @@ freewalk(pagetable_t pagetable)
 void
 uvmfree(pagetable_t pagetable, uint64 sz)
 {
+  // printf("uvmfree called with sz is %p\n", sz);
   if(sz > 0)
     uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
   freewalk(pagetable);
@@ -321,12 +355,16 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
+    {
       goto err;
+    }  
     memmove(mem, (char*)pa, PGSIZE);
     if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
+
       kfree(mem);
       goto err;
     }
+
   }
   return 0;
 
@@ -379,6 +417,8 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
+  return copyin_new(pagetable, dst, srcva, len);
+
   uint64 n, va0, pa0;
 
   while(len > 0){
@@ -396,6 +436,8 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
     srcva = va0 + PGSIZE;
   }
   return 0;
+
+
 }
 
 // Copy a null-terminated string from user to kernel.
@@ -405,6 +447,8 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 int
 copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
+  return copyinstr_new(pagetable, dst, srcva, max);
+
   uint64 n, va0, pa0;
   int got_null = 0;
 
@@ -439,4 +483,74 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+
+  // 
+}
+
+int dfs_count = 0;
+
+void dfs(pagetable_t pagetable, int depth)
+{
+
+  char *p;
+
+  if (depth == 1) {
+    p = "..";
+  }
+  else if(depth == 2) {
+    // return ;
+    p = ".. ..";
+  }
+  else {
+    // return ;
+    p = ".. .. ..";
+  }
+
+  for (int i = 0; i < 512; ++i) {
+    pte_t pte = pagetable[i];
+
+    uint64 child = PTE2PA(pte);
+
+    if ((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0) {
+      printf("%s%d: pte %p pa %p\n", p, i, pte, child);
+      dfs((pagetable_t)child, depth + 1);
+    }
+    else if (pte & PTE_V) {
+      printf("%s%d: pte %p pa %p\n", p, i, pte, child);
+    }
+  }
+}
+
+// TODO:修改dfs，不然通过不了测试
+void vmprint(pagetable_t pagetable) 
+{
+  printf("page table %p\n", pagetable);
+
+  dfs(pagetable, 1);
+
+}
+
+void
+uvmaddmapping(pagetable_t pagetable, pagetable_t proc_kernel_pagetable, uint64 begin_sz, uint64 end_sz)
+{
+  pte_t * pte1;
+  pte_t * pte2;
+
+  if(end_sz >= PLIC)
+  {
+    panic("uvmaddmapping: end_sz to big\n!");
+  }
+
+  for(uint64 sz = begin_sz; sz < end_sz; sz += PGSIZE)
+  {
+    pte1 = walk(pagetable, sz, 0);
+    pte2 = walk(proc_kernel_pagetable, sz, 1);
+
+    *pte2 = *pte1;
+
+    // printf("add mapping with sz is %p and pa is %p\n", sz, PTE2PA(*pte2));
+
+    *pte2 &= ~(PTE_X | PTE_W | PTE_U);
+  }
+
 }

@@ -173,6 +173,7 @@ copyinstr2(char *s)
       big[i] = 'x';
     big[PGSIZE] = '\0';
     char *args2[] = { big, big, big, 0 };
+    printf("child is going to exec echo\n");
     ret = exec("echo", args2);
     if(ret != -1){
       printf("exec(echo, BIG) returned %d, not -1\n", fd);
@@ -183,6 +184,7 @@ copyinstr2(char *s)
 
   int st = 0;
   wait(&st);
+  // printf("parent wait child with return value is %d\n", st);
   if(st != 747){
     printf("exec(echo, BIG) succeeded, should have failed\n");
     exit(1);
@@ -955,6 +957,9 @@ reparent2(char *s)
   for(int i = 0; i < 800; i++){
     int pid1 = fork();
     if(pid1 < 0){
+      // printf("%d %d\n", i, pid1);
+      // struct sysinfo s;
+      // sysinfo()
       printf("fork failed\n");
       exit(1);
     }
@@ -2549,6 +2554,8 @@ countfree()
     exit(1);
   }
 
+  // printf("!@#!@#!@#\n");
+
   if(pid == 0){
     close(fds[0]);
     
@@ -2588,6 +2595,8 @@ countfree()
 
   close(fds[0]);
   wait((int*)0);
+
+  // printf("hh!@#J!@#!@#!@#h\n");
   
   return n;
 }
@@ -2610,7 +2619,8 @@ run(void f(char *), char *s) {
   } else {
     wait(&xstatus);
     if(xstatus != 0) 
-      printf("FAILED\n");
+      //printf("FAILED with xstatus is %d \n", xstatus);
+      printf("FAILED\n");  // TODO : 
     else
       printf("OK\n");
     return xstatus == 0;
