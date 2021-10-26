@@ -67,6 +67,29 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+
+    if (which_dev == 2 && p->ticks_interval != 0 && p->doing_handler == 0) {
+       if (--(p->ticks) == 0) {
+        // it's going to call handler function.
+
+        // 我也不知道为什么保留这几个值就能保证调用正确, 当然我觉得直接弄一个trapframe的copy应该也是可以的
+
+        p->store.a1 = p->trapframe->a1;     // return values
+        p->store.s0 = p->trapframe->s0;     // saved pointer / frame pointer
+        p->store.sp = p->trapframe->sp;     // stack pointer
+        p->store.ra = p->trapframe->ra;     // return address
+        p->store.epc = p->trapframe->epc;   // 函数返回后执行的 pc
+
+
+        
+        // here to store everything for resum
+        
+        // after user trap return, it's going to call handler func.
+        p->ticks = p->ticks_interval;
+        p->trapframe->epc = p->handler;
+        p->doing_handler = 1;
+       }
+    }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
