@@ -65,7 +65,36 @@ usertrap(void)
     intr_on();
 
     syscall();
-  } else if((which_dev = devintr()) != 0){
+  }
+  else if (r_scause() == 13 || r_scause() == 15) {
+    uint64 va = r_stval();
+
+    if (va >= p->sz || va < p->trapframe->sp) {
+      // Handle faults on the invalid page below the user stack.  va < sp means address is below the user stack
+      // va > sz means va is to high, higher than the memory this process has asked for.
+
+      p->killed = 1;
+    }
+    else {
+      va = PGROUNDDOWN(va);
+      char * mem;
+      mem = kalloc();
+      if (mem != 0) {
+        memset(mem, 0, PGSIZE);
+        // printf("b1\n");
+        if (mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) < 0) {
+          kfree(mem);
+          // printf("b2\n");
+        }
+      }
+      else {
+        p->killed = 1;
+      }
+    }
+
+    
+  }
+   else if((which_dev = devintr()) != 0){
     // ok
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);

@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -181,9 +183,16 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
+    {
+      //printf("uvmunmap is going to panic with a is %p and pte is %p\n", a, pte);
+      // panic("uvmunmap: walk");
+      continue;
+    }
+
     if((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
+      // not panic;
+      continue;
+      //panic("uvmunmap: not mapped");
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -315,9 +324,12 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
-      panic("uvmcopy: pte should exist");
+      continue;
+      // panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
-      panic("uvmcopy: page not present");
+      continue;
+      // panic("uvmcopy: page not present");
+    // printf("copy PG i %p\n", i);
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
@@ -360,7 +372,28 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     va0 = PGROUNDDOWN(dstva);
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
-      return -1;
+    {
+      struct proc * p = myproc();
+      if (va0 >= p->sz || va0 < p->trapframe->sp) {
+        return -1;
+      }
+      else {
+        pa0 = (uint64)kalloc();
+        if (pa0 != 0) {
+          memset((void*)pa0, 0, PGSIZE);
+
+          if(mappages(p->pagetable, va0, PGSIZE, (uint64)pa0, PTE_W|PTE_X|PTE_R|PTE_U) < 0) {
+            kfree((void*)pa0);
+          }
+
+        }
+        else {
+          return -1;
+        }
+      }
+
+    }
+
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
@@ -384,8 +417,32 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
   while(len > 0){
     va0 = PGROUNDDOWN(srcva);
     pa0 = walkaddr(pagetable, va0);
+
     if(pa0 == 0)
-      return -1;
+    {
+      // pa0 is 0 means that the address va0 has not been allocated.
+      
+      struct proc * p = myproc();
+      if (va0 >= p->sz || va0 < p->trapframe->sp) {
+        return -1;
+      }
+      else {
+        pa0 = (uint64)kalloc();
+        if (pa0 != 0) {
+          memset((void*)pa0, 0, PGSIZE);
+
+          if(mappages(p->pagetable, va0, PGSIZE, (uint64)pa0, PTE_W|PTE_X|PTE_R|PTE_U) < 0) {
+            kfree((void*)pa0);
+          }
+
+        }
+        else {
+          return -1;
+        }
+      }
+
+    }
+
     n = PGSIZE - (srcva - va0);
     if(n > len)
       n = len;
@@ -439,4 +496,46 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+
+void dfs(pagetable_t pagetable, int depth)
+{
+
+  char *p;
+
+  if (depth == 1) {
+    p = "..";
+  }
+  else if(depth == 2) {
+    // return ;
+    p = ".. ..";
+  }
+  else {
+    // return ;
+    p = ".. .. ..";
+  }
+
+  for (int i = 0; i < 512; ++i) {
+    pte_t pte = pagetable[i];
+
+    uint64 child = PTE2PA(pte);
+
+    if ((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0) {
+      printf("%s%d: pte %p pa %p\n", p, i, pte, child);
+      dfs((pagetable_t)child, depth + 1);
+    }
+    else if (pte & PTE_V) {
+      printf("%s%d: pte %p pa %p\n", p, i, pte, child);
+    }
+  }
+}
+
+// TODO:修改dfs，不然通过不了测试
+void vmprint(pagetable_t pagetable) 
+{
+  printf("page table %p\n", pagetable);
+
+  dfs(pagetable, 1);
+
 }
