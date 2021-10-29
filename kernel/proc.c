@@ -267,6 +267,10 @@ fork(void)
     return -1;
   }
 
+  // printf("fork called\n");
+
+  // printf("proc %d is forking\n", p->pid);
+
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);

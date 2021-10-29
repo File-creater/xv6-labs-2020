@@ -143,10 +143,12 @@ filetest()
     }
     if(pid == 0){
       sleep(1);
+      // printf("hhh\n");
       if(read(fds[0], buf, sizeof(i)) != sizeof(i)){
         printf("error: read failed\n");
         exit(1);
       }
+      // printf("ggg\n");
       sleep(1);
       int j = *(int*)buf;
       if(j != i){
@@ -163,6 +165,7 @@ filetest()
 
   int xstatus = 0;
   for(int i = 0; i < 4; i++) {
+    //printf("waiting.....\n");
     wait(&xstatus);
     if(xstatus != 0) {
       exit(1);

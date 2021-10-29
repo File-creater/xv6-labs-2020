@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -311,27 +313,48 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+  // char *mem;
 
+  
+  
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
+    *pte &= ~PTE_W;
+    *pte |= PTE_COW;
+
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+
+    if (mappages(new, i, PGSIZE, (uint64)pa, flags) < 0) {
+      panic("uvmcopy panic\n");
       goto err;
     }
+
+    increase_shared(pa);
+
+    // struct proc * p = myproc();
+    // printf("proc %d is sharing page %p (num is %d) with child\n", p->pid, i, ret);
+
+    //int ret = increase_shared(pa);
+    // if (i == 0) {
+    //   printf("va is 0 and pa is %p and shared is now %d\n", pa, ret);
+    // }
+
+    // if((mem = kalloc()) == 0)
+    //   goto err;
+    // memmove(mem, (char*)pa, PGSIZE);
+    // if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
+    //   kfree(mem);
+    //   goto err;
+    // }
   }
   return 0;
 
  err:
-  uvmunmap(new, 0, i / PGSIZE, 1);
+  uvmunmap(new, 0, i / PGSIZE, 0);
   return -1;
 }
 
@@ -355,12 +378,50 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
+  // struct proc * p = myproc();
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
+
+    // pa0 = walkaddr(pagetable, va0);
+    // if(pa0 == 0)
+    //   return -1;
+
+    /**************** my code *********************/
+
+    pte_t * pte;
+    if (va0 >= MAXVA) {
       return -1;
+    }
+    pte = walk(pagetable, va0, 0);
+    if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0) {
+      return -1;
+    }
+
+    pa0 = PTE2PA(*pte);
+
+    if ( (*pte & PTE_COW) != 0 && (*pte & PTE_W) == 0) {
+      char *mem = kalloc();
+      if (mem == 0) {
+        struct proc * p = myproc();
+        p->killed = 1;
+        return -1;
+      }
+      else {
+
+        uint flags = PTE_FLAGS(*pte);
+        memmove(mem, (char*) pa0, PGSIZE);
+
+        *pte = PA2PTE(mem) | flags | PTE_W | PTE_V;
+        *pte &= ~PTE_COW;
+
+        kfree((char *) pa0);
+
+        pa0 = (uint64) mem;
+      }
+    }
+
+    /***************** my code **************************/
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
@@ -385,7 +446,8 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
     va0 = PGROUNDDOWN(srcva);
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
-      return -1;
+      return -1;  
+
     n = PGSIZE - (srcva - va0);
     if(n > len)
       n = len;
